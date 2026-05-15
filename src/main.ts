@@ -1,10 +1,18 @@
 import { Converter } from 'opencc-js';
 
+const HOST = Deno.env.get('TONGWEN_HOST') ?? '127.0.0.1';
+const PORT = Number(Deno.env.get('TONGWEN_PORT') ?? 1180);
+
+const BASE_MODEL_ID = 'tongwen-s2tw';
+const NO_TAG_MODEL_ID = `${BASE_MODEL_ID}-no-tag`;
+const MODEL_IDS = [BASE_MODEL_ID, NO_TAG_MODEL_ID];
 const convert = Converter({ from: 'cn', to: 'tw' });
 
-const MODEL_ID = 'tongwen-s2tw';
-const PORT = Number(Deno.env.get('TONGWEN_PORT') ?? 1180);
-const HOST = Deno.env.get('TONGWEN_HOST') ?? '127.0.0.1';
+const TRANSCRIPT_TAG_RE = /<\/?TRANSCRIPT>/g;
+
+function stripTranscriptTags(s: string): string {
+  return s.replace(TRANSCRIPT_TAG_RE, '').trim();
+}
 
 interface ChatMessage {
   role: string;
@@ -72,11 +80,12 @@ async function handleChat(req: Request): Promise<Response> {
     return apiError('`messages` must be a non-empty array');
   }
 
-  const input = pickInput(body.messages);
+  const model = body.model || BASE_MODEL_ID;
+  const raw = pickInput(body.messages);
+  const input = model.endsWith('-no-tag') ? stripTranscriptTags(raw) : raw;
   const output = convert(input);
   const id = makeId();
   const created = Math.floor(Date.now() / 1000);
-  const model = body.model || MODEL_ID;
 
   if (body.stream) {
     const enc = new TextEncoder();
@@ -150,7 +159,12 @@ async function handleChat(req: Request): Promise<Response> {
 function handleModels() {
   return json({
     object: 'list',
-    data: [{ id: MODEL_ID, object: 'model', created: 0, owned_by: 'tongwen' }],
+    data: MODEL_IDS.map((id) => ({
+      id,
+      object: 'model',
+      created: 0,
+      owned_by: 'tongwen',
+    })),
   });
 }
 
