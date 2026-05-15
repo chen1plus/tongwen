@@ -42,27 +42,30 @@ await step('POST /v1/chat/completions (non-stream)', async () => {
   console.log(`     → ${out}`);
 });
 
-await step('POST /v1/chat/completions (no-tag strips <TRANSCRIPT>)', async () => {
-  const r = await fetch(`${base}/v1/chat/completions`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      model: 'tongwen-s2tw-no-tag',
-      messages: [{
-        role: 'user',
-        content: '<TRANSCRIPT>语音转录的简体内容</TRANSCRIPT>',
-      }],
-    }),
-  });
-  const j = await r.json();
-  const out = j.choices?.[0]?.message?.content;
-  if (typeof out !== 'string') throw new Error('no content');
-  if (out.includes('<') || out.includes('>')) {
-    throw new Error(`expected tags stripped, got: ${out}`);
-  }
-  if (out !== '語音轉錄的簡體內容') throw new Error(`unexpected: ${out}`);
-  console.log(`     → ${out}`);
-});
+await step(
+  'POST /v1/chat/completions (voiceink strips <TRANSCRIPT>)',
+  async () => {
+    const r = await fetch(`${base}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'tongwen-s2tw-voiceink',
+        messages: [{
+          role: 'user',
+          content: '<TRANSCRIPT>语音转录的简体内容</TRANSCRIPT>',
+        }],
+      }),
+    });
+    const j = await r.json();
+    const out = j.choices?.[0]?.message?.content;
+    if (typeof out !== 'string') throw new Error('no content');
+    if (out.includes('<') || out.includes('>')) {
+      throw new Error(`expected tags stripped, got: ${out}`);
+    }
+    if (out !== '語音轉錄的簡體內容') throw new Error(`unexpected: ${out}`);
+    console.log(`     → ${out}`);
+  },
+);
 
 await step('POST /v1/chat/completions (default model keeps tags)', async () => {
   const r = await fetch(`${base}/v1/chat/completions`, {
