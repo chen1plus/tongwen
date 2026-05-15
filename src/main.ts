@@ -1,54 +1,14 @@
-import { Converter } from 'opencc-js';
+import * as lib from './lib.ts';
+import { voiceinkAdapter } from './voiceink.ts';
 
 const HOST = Deno.env.get('TONGWEN_HOST') ?? '127.0.0.1';
 const PORT = Number(Deno.env.get('TONGWEN_PORT') ?? 1180);
 
-const BASE_MODEL_ID = 'tongwen-s2tw';
-const NO_TAG_MODEL_ID = `${BASE_MODEL_ID}-no-tag`;
-const MODEL_IDS = [BASE_MODEL_ID, NO_TAG_MODEL_ID];
-const convert = Converter({ from: 'cn', to: 'tw' });
+const adapters: lib.Adapter[] = [voiceinkAdapter];
+const modelIds = [...adapters.map((a) => `${lib.BASE_ID}-${a.suffix}`), lib.BASE_ID];
 
-const TRANSCRIPT_TAG_RE = /<\/?TRANSCRIPT>/g;
-
-function stripTranscriptTags(s: string): string {
-  return s.replace(TRANSCRIPT_TAG_RE, '').trim();
-}
-
-interface ChatMessage {
-  role: string;
-  content: unknown;
-}
-
-interface ChatRequest {
-  model?: string;
-  messages: ChatMessage[];
-  stream?: boolean;
-}
-
-function extractText(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((part) => {
-        if (typeof part === 'string') return part;
-        if (
-          part && typeof part === 'object' &&
-          typeof (part as { text?: unknown }).text === 'string'
-        ) {
-          return (part as { text: string }).text;
-        }
-        return '';
-      })
-      .join('');
-  }
-  return '';
-}
-
-function pickInput(messages: ChatMessage[]): string {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === 'user') return extractText(messages[i].content);
-  }
-  return extractText(messages.at(-1)?.content);
+function pickAdapter(model: string): lib.Adapter | null {
+  return adapters.find((a) => model === `${lib.BASE_ID}-${a.suffix}`) ?? null;
 }
 
 const jsonHeaders = { 'content-type': 'application/json; charset=utf-8' };
@@ -65,12 +25,8 @@ function apiError(
   return json({ error: { message, type } }, status);
 }
 
-function makeId() {
-  return 'chatcmpl-' + crypto.randomUUID().replaceAll('-', '');
-}
-
 async function handleChat(req: Request): Promise<Response> {
-  let body: ChatRequest;
+  let body: lib.ChatRequest;
   try {
     body = await req.json();
   } catch {
@@ -80,56 +36,14 @@ async function handleChat(req: Request): Promise<Response> {
     return apiError('`messages` must be a non-empty array');
   }
 
-  const model = body.model || BASE_MODEL_ID;
-  const raw = pickInput(body.messages);
-  const input = model.endsWith('-no-tag') ? stripTranscriptTags(raw) : raw;
-  const output = convert(input);
-  const id = makeId();
-  const created = Math.floor(Date.now() / 1000);
+  const model = body.model || lib.BASE_ID;
+  const adapter = pickAdapter(model);
+  const raw = lib.pickInput(body.messages);
+  const input = adapter ? adapter.preprocess(raw) : raw;
+  const output = lib.opencc(input);
 
   if (body.stream) {
-    const enc = new TextEncoder();
-    const stream = new ReadableStream<Uint8Array>({
-      start(controller) {
-        const send = (obj: unknown) =>
-          controller.enqueue(enc.encode(`data: ${JSON.stringify(obj)}\n\n`));
-
-        send({
-          id,
-          object: 'chat.completion.chunk',
-          created,
-          model,
-          choices: [{
-            index: 0,
-            delta: { role: 'assistant' },
-            finish_reason: null,
-          }],
-        });
-        for (const ch of output) {
-          send({
-            id,
-            object: 'chat.completion.chunk',
-            created,
-            model,
-            choices: [{
-              index: 0,
-              delta: { content: ch },
-              finish_reason: null,
-            }],
-          });
-        }
-        send({
-          id,
-          object: 'chat.completion.chunk',
-          created,
-          model,
-          choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
-        });
-        controller.enqueue(enc.encode('data: [DONE]\n\n'));
-        controller.close();
-      },
-    });
-    return new Response(stream, {
+    return new Response(lib.buildChatStream({ output, model }), {
       headers: {
         'content-type': 'text/event-stream; charset=utf-8',
         'cache-control': 'no-cache',
@@ -138,28 +52,13 @@ async function handleChat(req: Request): Promise<Response> {
     });
   }
 
-  return json({
-    id,
-    object: 'chat.completion',
-    created,
-    model,
-    choices: [{
-      index: 0,
-      message: { role: 'assistant', content: output },
-      finish_reason: 'stop',
-    }],
-    usage: {
-      prompt_tokens: input.length,
-      completion_tokens: output.length,
-      total_tokens: input.length + output.length,
-    },
-  });
+  return json(lib.buildChatCompletion({ input, output, model }));
 }
 
 function handleModels() {
   return json({
     object: 'list',
-    data: MODEL_IDS.map((id) => ({
+    data: modelIds.map((id) => ({
       id,
       object: 'model',
       created: 0,
