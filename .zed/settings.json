@@ -1,0 +1,15 @@
+{
+  "languages": {
+    "TypeScript": {
+      "formatter": "language_server",
+      "language_servers": ["deno", "!vtsls"]
+    }
+  },
+  "lsp": {
+    "deno": {
+      "settings": {
+        "deno": { "enable": true }
+      }
+    }
+  }
+}
