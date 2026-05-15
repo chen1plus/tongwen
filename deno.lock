@@ -1,0 +1,16 @@
+{
+  "version": "5",
+  "specifiers": {
+    "npm:opencc-js@^1.0.5": "1.3.1"
+  },
+  "npm": {
+    "opencc-js@1.3.1": {
+      "integrity": "sha512-EyKDnjHNYlxo3Blll0OGH5qcyZBI3YmXpqeDEity/db50A5TFfCdvylrBlTyx1XvlSRUmh2a5AHvSf89h4u87Q=="
+    }
+  },
+  "workspace": {
+    "dependencies": [
+      "npm:opencc-js@^1.0.5"
+    ]
+  }
+}
