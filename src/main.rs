@@ -9,6 +9,12 @@ use std::convert::Infallible;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tower_http::cors::CorsLayer;
 
+use async_openai::types::chat::{
+    ChatChoice, ChatChoiceStream, ChatCompletionResponseMessage, ChatCompletionStreamResponseDelta,
+    CompletionUsage, CreateChatCompletionRequest, CreateChatCompletionResponse,
+    CreateChatCompletionStreamResponse, FinishReason, Role,
+};
+
 #[derive(serde::Serialize)]
 struct ErrorDetail {
     message: String,
@@ -32,72 +38,6 @@ fn api_error(message: &str, status: StatusCode, error_type: &str) -> Response {
         }),
     )
         .into_response()
-}
-
-#[derive(serde::Serialize)]
-struct ChatCompletionMessage {
-    role: &'static str,
-    content: String,
-}
-
-#[derive(serde::Serialize)]
-struct ChatCompletionChoice {
-    index: usize,
-    message: ChatCompletionMessage,
-    finish_reason: &'static str,
-}
-
-#[derive(serde::Serialize)]
-struct ChatCompletionUsage {
-    prompt_tokens: usize,
-    completion_tokens: usize,
-    total_tokens: usize,
-}
-
-#[derive(serde::Serialize)]
-struct ChatCompletionResponse {
-    id: String,
-    object: &'static str,
-    created: u64,
-    model: String,
-    choices: Vec<ChatCompletionChoice>,
-    usage: ChatCompletionUsage,
-}
-
-#[derive(serde::Serialize, Clone)]
-struct ChatCompletionChunkDelta {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    role: Option<&'static str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    content: Option<String>,
-}
-
-#[derive(serde::Serialize, Clone)]
-struct ChatCompletionChunkChoice {
-    index: usize,
-    delta: ChatCompletionChunkDelta,
-    #[serde(serialize_with = "serialize_null_or_str")]
-    finish_reason: Option<&'static str>,
-}
-
-// Special serializer to output null when None, instead of omitting the field entirely
-fn serialize_null_or_str<S>(value: &Option<&'static str>, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    match value {
-        Some(s) => serializer.serialize_str(s),
-        None => serializer.serialize_none(),
-    }
-}
-
-#[derive(serde::Serialize, Clone)]
-struct ChatCompletionChunk {
-    id: String,
-    object: &'static str,
-    created: u64,
-    model: String,
-    choices: Vec<ChatCompletionChunkChoice>,
 }
 
 async fn handle_health() -> &'static str {
@@ -130,12 +70,39 @@ async fn handle_models() -> impl IntoResponse {
 }
 
 async fn handle_chat(
-    payload_res: Result<Json<tongwen::ChatRequest>, axum::extract::rejection::JsonRejection>,
+    payload_res: Result<Json<serde_json::Value>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
-    let Json(body) = match payload_res {
+    let Json(mut value) = match payload_res {
         Ok(body) => body,
         Err(_) => {
-            return api_error("Invalid JSON body", StatusCode::BAD_REQUEST, "invalid_request_error");
+            return api_error(
+                "Invalid JSON body",
+                StatusCode::BAD_REQUEST,
+                "invalid_request_error",
+            );
+        }
+    };
+
+    if value.get("model").is_none()
+        || value["model"].is_null()
+        || value["model"].as_str().map_or(true, |s| s.is_empty())
+    {
+        if let serde_json::Value::Object(ref mut map) = value {
+            map.insert(
+                "model".to_string(),
+                serde_json::Value::String(tongwen::BASE_ID.to_string()),
+            );
+        }
+    }
+
+    let body: CreateChatCompletionRequest = match serde_json::from_value(value) {
+        Ok(body) => body,
+        Err(err) => {
+            return api_error(
+                &format!("Invalid request payload: {}", err),
+                StatusCode::BAD_REQUEST,
+                "invalid_request_error",
+            );
         }
     };
 
@@ -147,7 +114,7 @@ async fn handle_chat(
         );
     }
 
-    let model = body.model.clone().unwrap_or_else(|| tongwen::BASE_ID.to_string());
+    let model = body.model.clone();
     let voiceink_model = format!("{}-voiceink", tongwen::BASE_ID);
 
     let raw = tongwen::pick_input(&body.messages);
@@ -165,55 +132,76 @@ async fn handle_chat(
         let created = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
-            .as_secs();
+            .as_secs() as u32;
 
-        let chunk1 = ChatCompletionChunk {
+        let chunk1 = CreateChatCompletionStreamResponse {
             id: id.clone(),
-            object: "chat.completion.chunk",
+            object: "chat.completion.chunk".to_string(),
             created,
             model: model.clone(),
-            choices: vec![ChatCompletionChunkChoice {
+            system_fingerprint: None,
+            choices: vec![ChatChoiceStream {
                 index: 0,
-                delta: ChatCompletionChunkDelta {
-                    role: Some("assistant"),
+                delta: ChatCompletionStreamResponseDelta {
+                    role: Some(Role::Assistant),
                     content: None,
+                    function_call: None,
+                    tool_calls: None,
+                    refusal: None,
                 },
+                logprobs: None,
                 finish_reason: None,
             }],
+            usage: None,
+            service_tier: None,
         };
 
-        let chunk_final = ChatCompletionChunk {
+        let chunk_final = CreateChatCompletionStreamResponse {
             id: id.clone(),
-            object: "chat.completion.chunk",
+            object: "chat.completion.chunk".to_string(),
             created,
             model: model.clone(),
-            choices: vec![ChatCompletionChunkChoice {
+            system_fingerprint: None,
+            choices: vec![ChatChoiceStream {
                 index: 0,
-                delta: ChatCompletionChunkDelta {
+                delta: ChatCompletionStreamResponseDelta {
                     role: None,
                     content: None,
+                    function_call: None,
+                    tool_calls: None,
+                    refusal: None,
                 },
-                finish_reason: Some("stop"),
+                logprobs: None,
+                finish_reason: Some(FinishReason::Stop),
             }],
+            usage: None,
+            service_tier: None,
         };
 
         let mut events = Vec::new();
         events.push(Event::default().json_data(&chunk1).unwrap());
 
         for ch in output.chars() {
-            let chunk_char = ChatCompletionChunk {
+            let chunk_char = CreateChatCompletionStreamResponse {
                 id: id.clone(),
-                object: "chat.completion.chunk",
+                object: "chat.completion.chunk".to_string(),
                 created,
                 model: model.clone(),
-                choices: vec![ChatCompletionChunkChoice {
+                system_fingerprint: None,
+                choices: vec![ChatChoiceStream {
                     index: 0,
-                    delta: ChatCompletionChunkDelta {
+                    delta: ChatCompletionStreamResponseDelta {
                         role: None,
                         content: Some(ch.to_string()),
+                        function_call: None,
+                        tool_calls: None,
+                        refusal: None,
                     },
+                    logprobs: None,
                     finish_reason: None,
                 }],
+                usage: None,
+                service_tier: None,
             };
             events.push(Event::default().json_data(&chunk_char).unwrap());
         }
@@ -225,27 +213,37 @@ async fn handle_chat(
 
         Sse::new(event_stream).into_response()
     } else {
-        let response = ChatCompletionResponse {
+        let response = CreateChatCompletionResponse {
             id: format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()),
-            object: "chat.completion",
+            object: "chat.completion".to_string(),
             created: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
-                .as_secs(),
+                .as_secs() as u32,
             model,
-            choices: vec![ChatCompletionChoice {
+            system_fingerprint: None,
+            choices: vec![ChatChoice {
                 index: 0,
-                message: ChatCompletionMessage {
-                    role: "assistant",
-                    content: output.clone(),
+                message: ChatCompletionResponseMessage {
+                    role: Role::Assistant,
+                    content: Some(output.clone()),
+                    tool_calls: None,
+                    function_call: None,
+                    refusal: None,
+                    audio: None,
+                    annotations: None,
                 },
-                finish_reason: "stop",
+                logprobs: None,
+                finish_reason: Some(FinishReason::Stop),
             }],
-            usage: ChatCompletionUsage {
-                prompt_tokens: input.chars().count(),
-                completion_tokens: output.chars().count(),
-                total_tokens: input.chars().count() + output.chars().count(),
-            },
+            usage: Some(CompletionUsage {
+                prompt_tokens: input.chars().count() as u32,
+                completion_tokens: output.chars().count() as u32,
+                total_tokens: (input.chars().count() + output.chars().count()) as u32,
+                completion_tokens_details: None,
+                prompt_tokens_details: None,
+            }),
+            service_tier: None,
         };
         Json(response).into_response()
     }
