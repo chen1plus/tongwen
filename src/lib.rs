@@ -68,8 +68,8 @@ pub fn pick_input(messages: &[ChatCompletionRequestMessage]) -> String {
 
 /// Voiceink adapter preprocessor. Strips transcript tags and trims.
 pub fn strip_transcript_tags(s: &str) -> String {
-    s.replace("<TRANSCRIPT>", "")
-        .replace("</TRANSCRIPT>", "")
+    s.replace("<USER_MESSAGE>", "")
+        .replace("</USER_MESSAGE>", "")
         .trim()
         .to_string()
 }
