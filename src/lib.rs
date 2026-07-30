@@ -7,16 +7,16 @@ use async_openai::types::chat::{
     FinishReason, Role,
 };
 use axum::{
+    Router,
     extract::Json,
     http::StatusCode,
-    response::{sse::Event, IntoResponse, Response, Sse},
+    response::{IntoResponse, Response, Sse, sse::Event},
     routing::{get, post},
-    Router,
 };
 use std::convert::Infallible;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tower_http::cors::CorsLayer;
-use zhconv::{zhconv, Variant};
+use zhconv::{Variant, zhconv};
 
 pub const BASE_ID: &str = "tongwen-s2tw";
 
@@ -68,8 +68,8 @@ pub fn pick_input(messages: &[ChatCompletionRequestMessage]) -> String {
 
 /// Voiceink adapter preprocessor. Strips transcript tags and trims.
 pub fn strip_transcript_tags(s: &str) -> String {
-    s.replace("<USER_MESSAGE>", "")
-        .replace("</USER_MESSAGE>", "")
+    s.replace("<TRANSCRIPT>", "")
+        .replace("</TRANSCRIPT>", "")
         .trim()
         .to_string()
 }
