@@ -1,101 +1,130 @@
-# Tong Wen (同文)
+# Tong Wen (同文) v0.3
 
-A high-performance, lightweight, OpenAI-compatible Chinese translation proxy server written in Rust. 
+零 ASR、純規則 + OpenCC 的 OpenAI-compatible 台灣繁體後處理服務。Rust 實作，API 完全相容舊版：`/health`、`/v1/models`、`/v1/chat/completions`（含假 SSE）。
 
-It exposes a standard OpenAI Chat Completions endpoint, allowing you to drop it into any LLM client or application (e.g., translation workflows, dictation tools) as a drop-in replacement, but performs instant and accurate Simplified-to-Traditional Chinese (Taiwan variant) conversion using `zhconv`.
+內部後處理鏈移植自 [SpeakSlow (聲聲慢)](https://github.com/Jeffrey0117/SpeakSlow) 的 `text_processing.py`，順序 1:1 對應，詞彙層改用 `opencc-rust` S2TWP。
 
-## Features
+## 後處理管線
 
-- **OpenAI API Compatibility**: Implements standard `/v1/chat/completions` and `/v1/models` endpoints.
-- **Streaming & Non-Streaming Support**: Works seamlessly with both standard JSON payloads and Server-Sent Events (SSE) streaming (`stream: true`).
-- **Two Pre-configured Models**:
-  - `tongwen-s2tw`: Standard Simplified-to-Traditional (Taiwan) translation.
-  - `tongwen-s2tw-voiceink`: Specially optimized for Voiceink transcripts; automatically strips `<TRANSCRIPT>` and `</TRANSCRIPT>` tags before translating.
-- **Ultralight & Lightning Fast**: Built on top of **Axum** and **Tokio** for asynchronous, robust performance under load.
-- **Easy Configuration**: Simple environment variable control and permissive CORS out of the box.
+只取 **最後一條 user 訊息** 為輸入；若 `model` 以 `-voiceink` 結尾，先剝 `<TRANSCRIPT>` 標籤。
 
-## Getting Started
+按序執行（對應 `src/processing.rs` / `src/convert.rs`）：
 
-### Prerequisites
-Make sure you have [Rust and Cargo](https://rustup.rs/) installed.
+| # | 函式 | 內容 |
+|---|------|------|
+| 1 | `collapse_repeats` | 口吃疊字收斂（白名單保留 慢慢/謝謝；AABB 疊詞保留） |
+| 2 | `collapse_phrase_repeats` | 詞組口吃（其實其實其實→其實）+ 發語詞重複 |
+| 3 | `normalize_interjections` | 哎/誒→欸、去呃 |
+| 4 | `fix_tw_pronunciation` | 樂色/勒色→垃圾（負向環視避開 音樂色彩 等） |
+| 5 | `apply_punct_rules` | 句尾語助詞標點（吗→？/啦→！）、片語規則（真的假的→！）、哈→吼、好了好→好了吼 |
+| 6 | `format_lists` | 第一…第二…→1. 2. 3.（預設關閉，`TONGWEN_LISTS=1` 開啟） |
+| 7 | `localize_english_punct` | 英文為主的行→半形標點+句首大寫+i→I；中英混雜行不動 |
+| 8 | `to_traditional` | OpenCC `S2TWP` + 賬→帳 |
+| 9 | `strip_short_trailing_period` | ≤5 字短句的句尾。拿掉 |
 
-### Build and Run
-Start the server with the following command:
+不包含：ct-punc 神經標點、emoji 觸發詞、Hybrid LLM、使用者自訂 emoji DB。
+
+### 詞彙來源
+
+`opencc-rust` `DefaultConfig::S2TWP`（簡→台灣繁體，含台灣詞彙層）：信息→資訊、网络→網路、内存→記憶體、视频→影片、博客→部落格、软件→軟體。另有字形補丁 `賬→帳`。
+
+### 轉換行為
+
+無簡繁偵測閘門，一律走 `S2TWP`（OpenCC 不可用或轉換失敗時原樣返回）。偏好 `S2TWP`，初始化失敗自動退回 `S2T`。
+
+## 建置需求
+
+系統需安裝 OpenCC C++ 函式庫：
+
+```bash
+# macOS
+brew install opencc
+# Debian/Ubuntu
+apt install libopencc-dev
+```
+
+`opencc-rust` 透過 `pkg-config` / `OPENCC_*` 環境變數尋找函式庫；必要時：
+
+```bash
+OPENCC_LIB_DIRS=/opt/homebrew/lib OPENCC_INCLUDE_DIRS=/opt/homebrew/include cargo run --release
+```
+
+可啟用 `static-dictionaries` feature 將字典內嵌（仍需動態連結 libopencc）。
+
+## 環境變數
+
+| 變數 | 預設 | 說明 |
+|------|------|------|
+| `TONGWEN_HOST` | `127.0.0.1` | 綁定 host |
+| `TONGWEN_PORT` | `1180` | 綁定 port |
+| `TONGWEN_LISTS` | `0` | `1` 開啟規則式列點排版 |
+
+```bash
+TONGWEN_HOST=0.0.0.0 TONGWEN_PORT=8080 TONGWEN_LISTS=1 cargo run --release
+```
+
+## API
+
+- `GET /health` → `ok`
+- `GET /v1/models` → `tongwen`、`tongwen-voiceink`
+- `POST /v1/chat/completions`
+  - `model` 缺漏/空 → 補 `tongwen`
+  - `model` 以 `-voiceink` 結尾 → 剝 `<TRANSCRIPT>` 標籤
+  - `stream: true` → 假 SSE：角色 chunk → 逐字 chunk → finish → `[DONE]`
+  - 非串流 → `json!` 組 OpenAI 格式（含 `usage`）
+
+### 只轉最後一條 user 訊息
+
+`messages` 中多條訊息時，逆序取第一條 `role=user`；若無則取最後一條。`content` 支援字串與 `[{type:"text",text:...}]` 陣列。
+
+## 快速開始
 
 ```bash
 cargo run --release
+# http://127.0.0.1:1180
 ```
 
-By default, the server listens on `http://127.0.0.1:1180`.
+### 查詢模型
 
-### Environment Configuration
-You can customize the host and port using environment variables:
-
-```bash
-TONGWEN_HOST="0.0.0.0" TONGWEN_PORT="8080" cargo run --release
-```
-
----
-
-## API Usage Examples
-
-### 1. List Available Models
 ```bash
 curl http://localhost:1180/v1/models
 ```
 
-### 2. Chat Completion (Non-Streaming)
+### 非串流
+
 ```bash
 curl -X POST http://localhost:1180/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{
-    "model": "tongwen-s2tw",
-    "messages": [
-      {
-        "role": "user",
-        "content": "汉字转换：软件、电脑、网络"
-      }
-    ]
-  }'
+  -d '{"model":"tongwen","messages":[{"role":"user","content":"汉字转换：软件、电脑、网络"}]}'
+# → 漢字轉換：軟體、電腦、網路
 ```
 
-**Response:**
-```json
-{
-  "id": "chatcmpl-...",
-  "object": "chat.completion",
-  "created": 1716723456,
-  "model": "tongwen-s2tw",
-  "choices": [
-    {
-      "index": 0,
-      "message": {
-        "role": "assistant",
-        "content": "漢字轉換：軟體、電腦、網路"
-      },
-      "finish_reason": "stop"
-    }
-  ],
-  "usage": {
-    "prompt_tokens": 13,
-    "completion_tokens": 13,
-    "total_tokens": 26
-  }
-}
-```
+### 串流
 
-### 3. Chat Completion (Streaming)
 ```bash
 curl -X POST http://localhost:1180/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{
-    "model": "tongwen-s2tw",
-    "stream": true,
-    "messages": [
-      {
-        "role": "user",
-        "content": "简体变繁体"
-      }
-    ]
-  }'
+  -d '{"stream":true,"messages":[{"role":"user","content":"简体变繁体"}]}'
+```
+
+## 接入 VoiceInk / Superwhisper
+
+將 App 的 OpenAI Base URL 設為 `http://127.0.0.1:1180/v1`，模型選 `tongwen-voiceink`（會自動剝 `<TRANSCRIPT>`）。一般文字接 `tongwen`。
+
+## Crate 結構
+
+```
+src/
+  main.rs        # bin 薄殼：env → bind → graceful shutdown
+  lib.rs         # re-export
+  pipeline.rs    # post_process() 管線編排
+  processing.rs  # 純文字步驟（1:1 對應 text_processing.py）
+  convert.rs     # OpenCC S2TWP + 賬→帳
+  server.rs      # axum 路由 + 假 SSE
+```
+
+## 測試
+
+```bash
+cargo test
 ```
