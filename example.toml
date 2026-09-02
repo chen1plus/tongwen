@@ -1,0 +1,5 @@
+# Tong Wen 配置檔
+# 參考 README 的「設定」章節
+host = "127.0.0.1"
+port = 1181
+lists = false

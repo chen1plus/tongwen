@@ -1,3 +1,4 @@
+pub mod config;
 pub mod convert;
 pub mod pipeline;
 pub mod processing;

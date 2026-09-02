@@ -476,9 +476,7 @@ pub fn format_lists(text: &str) -> String {
 }
 
 pub fn format_lists_enabled() -> bool {
-    // 由環境變數控制，與 Python 的 _FORMAT_LISTS_ENABLED 對應
-    // 用於 pipeline 層判斷
-    std::env::var("TONGWEN_LISTS").map(|v| v == "1" || v.to_lowercase() == "true").unwrap_or(false)
+    crate::config::get().lists
 }
 
 // ---------- 7. localize_english_punct ----------
