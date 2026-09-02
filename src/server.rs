@@ -2,12 +2,10 @@ use axum::{
     Router,
     extract::Json,
     http::StatusCode,
-    response::{IntoResponse, Response, Sse, sse::Event},
+    response::{IntoResponse, Response},
     routing::{get, post},
 };
-use futures_util::stream;
 use serde_json::json;
-use std::convert::Infallible;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tower_http::cors::CorsLayer;
 
@@ -94,14 +92,21 @@ async fn handle_chat(
     let Json(mut value) = match payload_res {
         Ok(v) => v,
         Err(_) => {
-            return api_error("Invalid JSON body", StatusCode::BAD_REQUEST, "invalid_request_error");
+            return api_error(
+                "Invalid JSON body",
+                StatusCode::BAD_REQUEST,
+                "invalid_request_error",
+            );
         }
     };
 
     // model 缺漏/空值 → 補默認
     let model_missing = value.get("model").is_none()
         || value["model"].is_null()
-        || value["model"].as_str().map(|s| s.is_empty()).unwrap_or(false);
+        || value["model"]
+            .as_str()
+            .map(|s| s.is_empty())
+            .unwrap_or(false);
     if model_missing {
         if let Some(obj) = value.as_object_mut() {
             obj.insert(
@@ -124,7 +129,7 @@ async fn handle_chat(
                 "Invalid request payload: missing messages",
                 StatusCode::BAD_REQUEST,
                 "invalid_request_error",
-            )
+            );
         }
     };
 
@@ -136,11 +141,6 @@ async fn handle_chat(
         );
     }
 
-    let is_stream = value
-        .get("stream")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
     let raw = pick_input(&messages);
     let input = if model == format!("{}-voiceink", BASE_ID) {
         pipeline::strip_transcript_tags(&raw)
@@ -150,83 +150,30 @@ async fn handle_chat(
 
     let output = pipeline::post_process(&input);
 
-    if is_stream {
-        let id = format!("chatcmpl-{}", uuid::Uuid::new_v4().simple());
-        let created = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as u32;
-
-        let chunk_role = json!({
-            "id": id,
-            "object": "chat.completion.chunk",
-            "created": created,
-            "model": model,
-            "choices": [{
-                "index": 0,
-                "delta": {"role": "assistant"},
-                "finish_reason": null
-            }]
-        });
-        let chunk_stop = json!({
-            "id": id,
-            "object": "chat.completion.chunk",
-            "created": created,
-            "model": model,
-            "choices": [{
-                "index": 0,
-                "delta": {},
-                "finish_reason": "stop"
-            }]
-        });
-
-        let mut events = Vec::new();
-        events.push(Event::default().json_data(&chunk_role).unwrap());
-        for ch in output.chars() {
-            let chunk = json!({
-                "id": id,
-                "object": "chat.completion.chunk",
-                "created": created,
-                "model": model,
-                "choices": [{
-                    "index": 0,
-                    "delta": {"content": ch.to_string()},
-                    "finish_reason": null
-                }]
-            });
-            events.push(Event::default().json_data(&chunk).unwrap());
+    let created = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as u32;
+    let resp = json!({
+        "id": format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()),
+        "object": "chat.completion",
+        "created": created,
+        "model": model,
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": output
+            },
+            "finish_reason": "stop"
+        }],
+        "usage": {
+            "prompt_tokens": input.chars().count() as u32,
+            "completion_tokens": output.chars().count() as u32,
+            "total_tokens": (input.chars().count() + output.chars().count()) as u32
         }
-        events.push(Event::default().json_data(&chunk_stop).unwrap());
-        events.push(Event::default().data("[DONE]"));
-
-        let event_stream = stream::iter(events.into_iter().map(Ok::<_, Infallible>));
-        Sse::new(event_stream).into_response()
-    } else {
-        let created = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as u32;
-        let resp = json!({
-            "id": format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()),
-            "object": "chat.completion",
-            "created": created,
-            "model": model,
-            "choices": [{
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": output
-                },
-                "finish_reason": "stop"
-            }],
-            "usage": {
-                "prompt_tokens": input.chars().count() as u32,
-                "completion_tokens": output.chars().count() as u32,
-                "total_tokens": (input.chars().count() + output.chars().count()) as u32
-            }
-        });
-        Json(resp).into_response()
-    }
+    });
+    Json(resp).into_response()
 }
 
 async fn handle_404() -> Response {

@@ -1,4 +1,3 @@
-use futures_util::StreamExt;
 use tokio::net::TcpListener;
 use tongwen::app;
 
@@ -124,39 +123,13 @@ async fn smoke_test() {
     let body: serde_json::Value = res.json().await.unwrap();
     assert_eq!(body.get("model").and_then(|v| v.as_str()).unwrap(), "tongwen");
 
-    // 14. stream
+    // 14. stream 已移除：stream:true 回一般 JSON 回應
     let payload = serde_json::json!({"stream": true,"messages": [{"role": "user", "content": "简体变繁体"}]});
     let res = client.post(format!("{}/v1/chat/completions", base_url)).json(&payload).send().await.unwrap();
     assert_eq!(res.status(), 200);
-    let mut stream = res.bytes_stream();
-    let mut buf = String::new();
-    let mut acc = String::new();
-    let mut saw_done = false;
-    while let Some(chunk) = stream.next().await {
-        let text = String::from_utf8(chunk.unwrap().to_vec()).unwrap();
-        buf.push_str(&text);
-        while let Some(pos) = buf.find('\n') {
-            let line = buf[..pos].to_string();
-            buf = buf[pos + 1..].to_string();
-            let line = line.trim();
-            if line.is_empty() { continue; }
-            if line.starts_with("data: ") {
-                let p = line["data: ".len()..].trim();
-                if p == "[DONE]" { saw_done = true; continue; }
-                if let Ok(j) = serde_json::from_str::<serde_json::Value>(p) {
-                    if let Some(d) = j.get("choices").and_then(|c| c.as_array()).and_then(|a| a.get(0)).and_then(|f| f.get("delta")).and_then(|d| d.get("content")).and_then(|c| c.as_str()) {
-                        acc.push_str(d);
-                    }
-                }
-            }
-        }
-    }
-    if !buf.trim().is_empty() && buf.trim().starts_with("data: ") {
-        let p = buf.trim()["data: ".len()..].trim();
-        if p == "[DONE]" { saw_done = true; }
-    }
-    assert!(saw_done, "stream missing [DONE]");
-    assert!(acc.contains("簡體"), "stream output missing 簡體, got {:?}", acc);
+    let body: serde_json::Value = res.json().await.unwrap();
+    let out = extract_content(&body);
+    assert!(out.contains("簡體"), "stream:true should return JSON, got {:?}", out);
 
     println!("\nall good ✓");
 }

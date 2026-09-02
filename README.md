@@ -1,6 +1,6 @@
 # Tong Wen (同文) v0.3
 
-零 ASR、純規則 + OpenCC 的 OpenAI-compatible 台灣繁體後處理服務。Rust 實作，API 完全相容舊版：`/health`、`/v1/models`、`/v1/chat/completions`（含假 SSE）。
+零 ASR、純規則 + OpenCC 的 OpenAI-compatible 台灣繁體後處理服務。Rust 實作，API 相容舊版：`/health`、`/v1/models`、`/v1/chat/completions`（`stream: true` 會被接受但不串流，一律回傳完整 JSON 回應）。
 
 內部後處理鏈移植自 [SpeakSlow (聲聲慢)](https://github.com/Jeffrey0117/SpeakSlow) 的 `text_processing.py`，順序 1:1 對應，詞彙層改用 `opencc-rust` S2TWP。
 
@@ -78,8 +78,7 @@ cargo run --release -- -c my.toml
 - `POST /v1/chat/completions`
   - `model` 缺漏/空 → 補 `tongwen`
   - `model` 以 `-voiceink` 結尾 → 剝 `<TRANSCRIPT>` 標籤
-  - `stream: true` → 假 SSE：角色 chunk → 逐字 chunk → finish → `[DONE]`
-  - 非串流 → `json!` 組 OpenAI 格式（含 `usage`）
+  - 回應為 OpenAI 格式 JSON（含 `usage`）
 
 ### 只轉最後一條 user 訊息
 
@@ -98,21 +97,13 @@ cargo run --release
 curl http://localhost:1180/v1/models
 ```
 
-### 非串流
+### 轉換
 
 ```bash
 curl -X POST http://localhost:1180/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"tongwen","messages":[{"role":"user","content":"汉字转换：软件、电脑、网络"}]}'
 # → 漢字轉換：軟體、電腦、網路
-```
-
-### 串流
-
-```bash
-curl -X POST http://localhost:1180/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"stream":true,"messages":[{"role":"user","content":"简体变繁体"}]}'
 ```
 
 ## 接入 VoiceInk / Superwhisper
@@ -129,7 +120,7 @@ src/
   pipeline.rs    # post_process() 管線編排
   processing.rs  # 純文字步驟（1:1 對應 text_processing.py）
   convert.rs     # OpenCC S2TWP + 賬→帳
-  server.rs      # axum 路由 + 假 SSE
+  server.rs      # axum 路由
 example.toml         # 範例設定檔
 ```
 

@@ -5,7 +5,6 @@ edition = "2024"
 
 [dependencies]
 axum = "0.8"
-futures-util = "0.3"
 opencc-rust = "2.0"
 regex = "1.13"
 serde = { version = "1.0", features = ["derive"] }
@@ -16,4 +15,4 @@ tower-http = { version = "0.7", features = ["cors"] }
 uuid = { version = "1.23", features = ["v4"] }
 
 [dev-dependencies]
-reqwest = { version = "0.13", features = ["json", "stream"] }
+reqwest = { version = "0.13", features = ["json"] }
