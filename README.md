@@ -2,7 +2,7 @@
 
 零 ASR、純規則 + OpenCC 的 OpenAI-compatible 台灣繁體後處理服務。Rust 實作，API 相容舊版：`/health`、`/v1/models`、`/v1/chat/completions`（`stream: true` 會被接受但不串流，一律回傳完整 JSON 回應）。
 
-內部後處理鏈移植自 [SpeakSlow (聲聲慢)](https://github.com/Jeffrey0117/SpeakSlow) 的 `text_processing.py`，順序 1:1 對應，詞彙層改用 `opencc-rust` S2TWP。
+內部後處理鏈移植自 [SpeakSlow (聲聲慢)](https://github.com/Jeffrey0117/SpeakSlow) 的 `text_processing.py`，順序 1:1 對應，簡轉繁改用 `opencc-rust` S2TW。
 
 ## 後處理管線
 
@@ -19,18 +19,18 @@
 | 5   | `apply_punct_rules`           | 句尾語助詞標點（吗→？/啦→！）、片語規則（真的假的→！）、哈→吼、好了好→好了吼 |
 | 6   | `format_lists`                | 第一…第二…→1. 2. 3.（預設關閉，`config.toml` `lists = true` 開啟）           |
 | 7   | `localize_english_punct`      | 英文為主的行→半形標點+句首大寫+i→I；中英混雜行不動                           |
-| 8   | `to_traditional`              | OpenCC `S2TWP` + 賬→帳                                                       |
+| 8   | `to_traditional`              | OpenCC `S2TW` + 賬→帳                                                        |
 | 9   | `strip_short_trailing_period` | ≤5 字短句的句尾。拿掉                                                        |
 
 不包含：ct-punc 神經標點、emoji 觸發詞、Hybrid LLM、使用者自訂 emoji DB。
 
 ### 詞彙來源
 
-`opencc-rust` `DefaultConfig::S2TWP`（簡→台灣繁體，含台灣詞彙層）：信息→資訊、网络→網路、内存→記憶體、视频→影片、博客→部落格、软件→軟體。另有字形補丁 `賬→帳`。
+`opencc-rust` `DefaultConfig::S2TW`（簡→台灣字形繁體，無詞彙層）：网络→網絡、内存→內存、视频→視頻、软件→軟件。另有字形補丁 `賬→帳`。
 
 ### 轉換行為
 
-無簡繁偵測閘門，一律走 `S2TWP`（OpenCC 不可用或轉換失敗時原樣返回）。偏好 `S2TWP`，初始化失敗自動退回 `S2T`。
+無簡繁偵測閘門，一律走 `S2TW`（OpenCC 不可用或轉換失敗時原樣返回）。偏好 `S2TW`，初始化失敗自動退回 `S2T`。
 
 ## 建置需求
 
@@ -119,7 +119,7 @@ src/
   config.rs      # CLI --config 載入（host/port/lists），無參數用預設
   pipeline.rs    # post_process() 管線編排
   processing.rs  # 純文字步驟（1:1 對應 text_processing.py）
-  convert.rs     # OpenCC S2TWP + 賬→帳
+  convert.rs     # OpenCC S2TW + 賬→帳
   server.rs      # axum 路由
 example.toml         # 範例設定檔
 ```

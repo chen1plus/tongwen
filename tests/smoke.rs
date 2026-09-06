@@ -42,25 +42,25 @@ async fn smoke_test() {
     assert!(ids.contains(&"tongwen"));
     assert!(ids.contains(&"tongwen-voiceink"));
 
-    // 3. POST non-stream — OpenCC 詞彙：信息→資訊
+    // 3. POST non-stream — OpenCC 字轉換：信息（無詞彙層，原樣保留）
     let payload = serde_json::json!({"messages": [{"role": "user", "content": "信息"}]});
     let res = client.post(format!("{}/v1/chat/completions", base_url)).json(&payload).send().await.unwrap();
     assert_eq!(res.status(), 200);
     let body: serde_json::Value = res.json().await.unwrap();
     let out = extract_content(&body);
-    assert!(out.contains("資訊"), "信息→資訊 failed, got {:?}", out);
+    assert!(out.contains("信息"), "信息 should stay, got {:?}", out);
 
-    // 3b. 网络→網路
+    // 3b. 网络→網絡
     let payload = serde_json::json!({"messages": [{"role": "user", "content": "网络"}]});
     let res = client.post(format!("{}/v1/chat/completions", base_url)).json(&payload).send().await.unwrap();
     let out = extract_content(&res.json::<serde_json::Value>().await.unwrap());
-    assert!(out.contains("網路"), "网络→網路 failed, got {:?}", out);
+    assert!(out.contains("網絡"), "网络→網絡 failed, got {:?}", out);
 
-    // 3c. 软件→軟體
+    // 3c. 软件→軟件
     let payload = serde_json::json!({"messages": [{"role": "user", "content": "软件"}]});
     let res = client.post(format!("{}/v1/chat/completions", base_url)).json(&payload).send().await.unwrap();
     let out = extract_content(&res.json::<serde_json::Value>().await.unwrap());
-    assert!(out.contains("軟體"), "软件→軟體 failed, got {:?}", out);
+    assert!(out.contains("軟件"), "软件→軟件 failed, got {:?}", out);
 
     // 4. 台灣發音修正：樂色→垃圾，且 音樂色彩 不動
     let payload = serde_json::json!({"messages": [{"role": "user", "content": "樂色"}]});
@@ -104,7 +104,7 @@ async fn smoke_test() {
     let out = extract_content(&res.json::<serde_json::Value>().await.unwrap());
     assert_eq!(out, "你好", "short period failed, got {:?}", out);
 
-    // 11. 純繁經 S2TWP 零變動
+    // 11. 純繁經 S2TW 零變動
     let payload = serde_json::json!({"messages": [{"role": "user", "content": "這是繁體中文"}]});
     let res = client.post(format!("{}/v1/chat/completions", base_url)).json(&payload).send().await.unwrap();
     let out = extract_content(&res.json::<serde_json::Value>().await.unwrap());

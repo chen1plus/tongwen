@@ -25,7 +25,7 @@ pub fn post_process(input: &str) -> String {
     }
     // 7 英文行標點在地化
     s = processing::localize_english_punct(&s);
-    // 8 簡轉繁（S2TWP + 賬→帳）
+    // 8 簡轉繁（S2TW + 賬→帳）
     s = convert::to_traditional(&s);
     // 9 短句句尾。移除
     s = processing::strip_short_trailing_period(&s);
