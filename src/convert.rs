@@ -1,10 +1,14 @@
-use opencc_rust::{DefaultConfig, OpenCC};
+use opencc_rust::{generate_static_dictionary, DefaultConfig, OpenCC};
 use std::sync::OnceLock;
 
-// OpenCC 單例 — S2TW
+// OpenCC 單例 — S2TW；字典內嵌於二進位，執行時解到暫存目錄（leak 讓檔案與程序同壽命）
 static CONVERTER: OnceLock<Option<OpenCC>> = OnceLock::new();
 fn converter() -> &'static Option<OpenCC> {
-    CONVERTER.get_or_init(|| OpenCC::new(DefaultConfig::S2TW).ok())
+    CONVERTER.get_or_init(|| {
+        let dir = Box::leak(Box::new(tempfile::tempdir().ok()?));
+        generate_static_dictionary(dir.path(), DefaultConfig::S2TW).ok()?;
+        OpenCC::new(dir.path().join(DefaultConfig::S2TW.get_file_name())).ok()
+    })
 }
 
 pub fn to_traditional(text: &str) -> String {

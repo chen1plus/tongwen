@@ -5,10 +5,11 @@ edition = "2024"
 
 [dependencies]
 axum = "0.8"
-opencc-rust = "2.0"
+opencc-rust = { version = "2.0", features = ["static-dictionaries"] }
 regex = "1.13"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+tempfile = "3"
 toml = "0.8"
 tokio = { version = "1.52", features = ["macros", "rt-multi-thread", "net", "signal"] }
 tower-http = { version = "0.7", features = ["cors"] }
@@ -16,3 +17,6 @@ uuid = { version = "1.23", features = ["v4"] }
 
 [dev-dependencies]
 reqwest = { version = "0.13", features = ["json"] }
+
+[profile.release]
+strip = true

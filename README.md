@@ -4,6 +4,18 @@
 
 內部後處理鏈移植自 [SpeakSlow (聲聲慢)](https://github.com/Jeffrey0117/SpeakSlow) 的 `text_processing.py`，順序 1:1 對應，簡轉繁改用 `opencc-rust` S2TW。
 
+## 安裝
+
+自 [Releases](https://github.com/chen1plus/tongwen/releases) 下載預編譯包（`v*` tag 自動建置，附 `SHA256SUMS`）：
+
+| 平台 | 檔案 | 相依 |
+| --- | --- | --- |
+| macOS（Apple Silicon） | `tongwen-<版本>-aarch64-apple-darwin.tar.gz` | `brew install opencc`（動態連結） |
+| Linux amd64 | `tongwen-<版本>-x86_64-unknown-linux-gnu.tar.gz` | 無（單一可執行檔） |
+| Linux arm64 | `tongwen-<版本>-aarch64-unknown-linux-gnu.tar.gz` | 無（單一可執行檔） |
+
+Linux 預編譯二進位將 OpenCC 靜態連結、字典內嵌（`static-dictionaries`），執行期僅相依 glibc（Ubuntu 26.04 建置，需較新發行版），無需安裝任何 opencc 套件。Intel Mac 或其他環境請從原始碼建置。
+
 ## 後處理管線
 
 只取 **最後一條 user 訊息** 為輸入；若 `model` 以 `-voiceink` 結尾，先剝 `<TRANSCRIPT>` 標籤。
@@ -49,7 +61,7 @@ apt install libopencc-dev
 OPENCC_LIB_DIRS=/opt/homebrew/lib OPENCC_INCLUDE_DIRS=/opt/homebrew/include cargo run --release
 ```
 
-可啟用 `static-dictionaries` feature 將字典內嵌（仍需動態連結 libopencc）。
+已啟用 `static-dictionaries`：字典內嵌於二進位，執行期不需系統字典檔；連結 libopencc 仍需上述系統函式庫（Release CI 的 Linux 包改為源碼靜態連結）。
 
 ## 設定
 

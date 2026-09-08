@@ -1,0 +1,128 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runs-on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runs-on: macos-26
+            target: aarch64-apple-darwin
+          - runs-on: ubuntu-26.04
+            target: x86_64-unknown-linux-gnu
+          - runs-on: ubuntu-26.04-arm
+            target: aarch64-unknown-linux-gnu
+    env:
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install OpenCC (macOS)
+        if: runner.os == 'macOS'
+        run: brew install opencc
+
+      # Linux 預編譯包需為單一可執行檔：OpenCC 從源碼靜態連結（apt 套件僅 1.1.9 且無 .a）、
+      # 字典由 static-dictionaries 內嵌，執行期僅相依 glibc。
+      - name: Install build tools (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          if ! command -v cmake >/dev/null || ! command -v g++ >/dev/null; then
+            sudo apt-get update || true
+            sudo apt-get install -y cmake g++
+          fi
+
+      - name: Build static OpenCC (Linux)
+        if: runner.os == 'Linux'
+        env:
+          OPENCC_VERSION: "1.4.2"
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/BYVoid/OpenCC/archive/refs/tags/ver.${OPENCC_VERSION}.tar.gz" -o /tmp/opencc.tar.gz
+          tar -xzf /tmp/opencc.tar.gz -C /tmp
+          cmake -S "/tmp/OpenCC-ver.${OPENCC_VERSION}" -B /tmp/opencc-build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DBUILD_OPENCC_JIEBA_PLUGIN=OFF \
+            -DCMAKE_INSTALL_PREFIX=/tmp/opencc-prefix
+          cmake --build /tmp/opencc-build --parallel
+          cmake --install /tmp/opencc-build
+          GCC_LIBDIR="$(dirname "$(g++ -print-file-name=libstdc++.a)")"
+          {
+            echo "OPENCC_DIR=/tmp/opencc-prefix"
+            echo "OPENCC_LIB_DIRS=/tmp/opencc-prefix/lib:${GCC_LIBDIR}"
+            echo "OPENCC_LIBS=opencc:marisa"
+            echo "OPENCC_STATIC=1"
+            echo "OPENCC_STATIC_STDCPP=1"
+          } >> "$GITHUB_ENV"
+
+      - name: Build
+        run: cargo build --release --locked --target "$TARGET"
+
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          BIN="target/${TARGET}/release/tongwen"
+          "$BIN" &
+          PID=$!
+          trap 'kill "$PID" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 20); do
+            curl -fsS http://127.0.0.1:1180/health >/dev/null 2>&1 && break
+            sleep 0.5
+          done
+          [ "$(curl -fsS http://127.0.0.1:1180/health)" = "ok" ]
+          curl -fsS -X POST http://127.0.0.1:1180/v1/chat/completions \
+            -H 'Content-Type: application/json' \
+            -d '{"messages":[{"role":"user","content":"网络软件"}]}' | grep -q '網絡軟件'
+
+      - name: Package
+        id: package
+        run: |
+          set -euo pipefail
+          VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml","rb"))["package"]["version"])')
+          NAME="tongwen-${VERSION}-${TARGET}"
+          STAGE="$(mktemp -d)/${NAME}"
+          mkdir -p "$STAGE"
+          cp "target/${TARGET}/release/tongwen" "$STAGE/"
+          cp LICENSE README.md example.toml "$STAGE/"
+          tar -czf "${NAME}.tar.gz" -C "$(dirname "$STAGE")" "${NAME}"
+          echo "archive=${NAME}.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.archive }}
+          path: ${{ steps.package.outputs.archive }}
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: cd dist && sha256sum -- *.tar.gz > SHA256SUMS
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
